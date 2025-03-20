@@ -1,5 +1,6 @@
-package ProblemeDesPhilosophes;
+package org.example;
 
+import java.util.Random;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,6 +15,9 @@ class Philosophe extends Thread {
     private AtomicInteger eatCount; // Compteur de repas pour ce philosophe
     private PriorityBlockingQueue<Philosophe> priorityQueue; // File de priorité
     private Lock forkLock; // Verrou pour la prise atomique des fourchettes
+    private long lastEatenTime; // Dernier moment où le philosophe a mangé
+    private static final long TIMEOUT = 1000; // Temps maximum sans manger (2 secondes)
+    private Random random = new Random();
 
     public Philosophe(int id, Semaphore leftFork, Semaphore rightFork, Semaphore arbitre, AtomicInteger eatCount, PriorityBlockingQueue<Philosophe> priorityQueue, Lock forkLock) {
         this.id = id;
@@ -23,6 +27,7 @@ class Philosophe extends Thread {
         this.eatCount = eatCount;
         this.priorityQueue = priorityQueue;
         this.forkLock = forkLock;
+        this.lastEatenTime = System.currentTimeMillis(); // Initialiser le temps du dernier repas
     }
 
     public int getEatCount() {
@@ -33,21 +38,33 @@ class Philosophe extends Thread {
         return id;
     }
 
+    public long getLastEatenTime() {
+        return lastEatenTime;
+    }
+
+    public static long getTIMEOUT() {
+        return TIMEOUT;
+    }
+
     private void think() throws InterruptedException {
-        System.out.println("Philosophe " + id + " est en train de penser.");
-        Thread.sleep((long) (Math.random() * 1000));
+        int thinkTime = random.nextInt(500) ; // Random time between 200 and 700 ms
+        System.out.println("[" + System.currentTimeMillis() + "] Philosophe " + id + " est en train de penser pendant " + thinkTime + " ms.");
+        Thread.sleep(thinkTime);
     }
 
     private void eat() throws InterruptedException {
-        System.out.println("Philosophe " + id + " est en train de manger.");
-        Thread.sleep((long) (Math.random() * 1000));
-        eatCount.incrementAndGet(); // Incrémenter le compteur de repas
+        lastEatenTime = System.currentTimeMillis(); // Réinitialiser le temps du dernier repas
+        int eatTime = random.nextInt(400); // Random time between 0 and 500 ms
+        System.out.println("[" + System.currentTimeMillis() + "] Philosophe " + id + " est en train de manger pendant " + eatTime + " ms.");
+        Thread.sleep(eatTime);
+        eatCount.set(eatCount.incrementAndGet()); // Incrémenter le compteur de repas
+        lastEatenTime = System.currentTimeMillis(); // Réinitialiser le temps du dernier repas
     }
 
     @Override
     public void run() {
         try {
-            while (true) {
+            while (eatCount.intValue()<5) {
                 think();
 
                 // S'inscrire dans la file de priorité
@@ -60,9 +77,9 @@ class Philosophe extends Thread {
                 forkLock.lock();
                 try {
                     leftFork.acquire();
-                    System.out.println("Philosophe " + id + " a pris la fourchette gauche.");
+                    System.out.println("[" + System.currentTimeMillis() + "] Philosophe " + id + " a pris la fourchette gauche.");
                     rightFork.acquire();
-                    System.out.println("Philosophe " + id + " a pris la fourchette droite.");
+                    System.out.println("[" + System.currentTimeMillis() + "] Philosophe " + id + " a pris la fourchette droite.");
                 } finally {
                     forkLock.unlock();
                 }
@@ -71,9 +88,8 @@ class Philosophe extends Thread {
 
                 // Relâcher les fourchettes
                 rightFork.release();
-                System.out.println("Philosophe " + id + " a relâché la fourchette droite.");
                 leftFork.release();
-                System.out.println("Philosophe " + id + " a relâché la fourchette gauche.");
+                System.out.println("[" + System.currentTimeMillis() + "] Philosophe " + id + " a relâché la fourchette droite et la fourchette gauche..");
 
                 // Libérer la permission
                 arbitre.release();
@@ -81,8 +97,9 @@ class Philosophe extends Thread {
                 // Se retirer de la file de priorité
                 priorityQueue.remove(this);
             }
+            System.out.println("=========================================================\n[" + System.currentTimeMillis() + "] Philosophe " + id + " manger 5 fois.\n=========================================================");
         } catch (InterruptedException e) {
-            System.out.println("Philosophe " + id + " a été interrompu.");
+            System.out.println("[" + System.currentTimeMillis() + "] Philosophe " + id + " a été interrompu.");
             Thread.currentThread().interrupt();
         } finally {
             // S'assurer que les fourchettes sont relâchées en cas d'erreur
@@ -138,7 +155,40 @@ class DinerPhilosophes {
                     // Libérer la permission pour le philosophe suivant
                     arbitre.release();
                 } catch (InterruptedException e) {
-                    System.out.println("Arbitre a été interrompu.");
+                    System.out.println("[" + System.currentTimeMillis() + "] Arbitre a été interrompu.");
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }).start();
+
+        // Thread pour surveiller les philosophes et arrêter le programme si un philosophe meurt
+        new Thread(() -> {
+            while (true) {
+                try {
+                    int count = 0;
+                    Thread.sleep(10); // Vérifier toutes les 10 millisecondes
+                    for (Philosophe philosophe : philosophes) {
+                        if (philosophe.getEatCount()==5){
+                            count++;
+                        }
+                        if (count==5){
+                            System.out.println("====================================================\n||     Tous les philosophe ont manger 5 fois      ||\n====================================================");
+                            System.exit(0);
+
+                        }
+                        else if (((System.currentTimeMillis() - philosophe.getLastEatenTime()) > Philosophe.getTIMEOUT()) &&philosophe.getEatCount()!=5) {
+                            System.out.println("[" + System.currentTimeMillis() + "] Philosophe " + philosophe.getIdPhilosophe() + " est mort de faim. Arrêt du programme.");
+                            // Interrompre tous les philosophes
+                            for (Philosophe p : philosophes) {
+                                p.interrupt();
+                            }
+                            // Arrêter le programme
+                            System.exit(0);
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    System.out.println("[" + System.currentTimeMillis() + "] Surveillance des philosophes interrompue.");
                     Thread.currentThread().interrupt();
                     return;
                 }
